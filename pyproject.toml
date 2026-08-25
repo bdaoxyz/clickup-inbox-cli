@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clickup-inbox-cli"
+version = "0.3.0"
+description = "Experimental CLI for ClickUp's private Inbox API"
+requires-python = ">=3.11"
+
+[project.optional-dependencies]
+browser = [
+  "keyring>=25,<27; sys_platform == 'darwin'",
+  "playwright>=1.49,<2",
+]
+keychain = [
+  "keyring>=25,<27",
+]
+macos = [
+  "keyring>=25,<27",
+  "playwright>=1.49,<2",
+]
+
+[project.scripts]
+clickup-inbox = "clickup_inbox_cli.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

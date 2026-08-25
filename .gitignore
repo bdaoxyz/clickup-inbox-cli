@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.env
+.env.*
+!.env.example
+session.json
+session.json.lock
+chromium-profile/
