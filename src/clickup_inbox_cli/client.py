@@ -151,9 +151,12 @@ class InboxClient:
         )
 
     def _request(
-        self, method: str, path: str, payload: Mapping[str, Any]
+        self, method: str, path: str, payload: Mapping[str, Any] | None = None
     ) -> dict[str, Any]:
-        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        body = (
+            json.dumps(payload, separators=(",", ":")).encode("utf-8")
+            if payload is not None else None
+        )
         request = Request(
             f"{self.credentials.api_base}{path}",
             data=body,
