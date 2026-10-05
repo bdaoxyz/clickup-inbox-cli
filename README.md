@@ -1,9 +1,9 @@
 # clickup-inbox-cli
 
-Experimental CLI for ClickUp's private Inbox and Assigned Comments APIs. It
-complements the official ClickUp integration: use this CLI to discover your
-assigned/delegated comments and manage Inbox state, and use the connected ClickUp
-MCP to resolve/reopen, reassign, edit, delete, or reply to comments.
+Experimental CLI for ClickUp's private Inbox, Assigned Comments, and Replies APIs.
+Use this CLI to discover assigned/delegated comments and reply threads, and to
+manage Inbox state. Use the connected ClickUp MCP to read thread contents,
+resolve/reopen, reassign, edit, delete, or reply to comments.
 
 This is not an official ClickUp API client. Its endpoints and authentication
 contract were observed from the ClickUp web application and can change without
@@ -113,6 +113,51 @@ bundle snapshot ID, not a ClickUp task ID:
 
 After clear or snooze, list the corresponding folder to obtain the new snapshot
 ID before reversing the action. Snapshot IDs change when Inbox state changes.
+
+## Home Replies
+
+The Replies shortcut in Home has separate Unread and Read views. Both reuse the
+same login and session refresh as Inbox:
+
+```sh
+.venv/bin/clickup-inbox replies unread
+.venv/bin/clickup-inbox replies unread --all --json
+.venv/bin/clickup-inbox replies read --all --json
+.venv/bin/clickup-inbox replies read --limit 5 --cursor '<next_cursor>' --json
+```
+
+These are read-only discovery commands. `replies read` selects threads that are
+already in the Read view; fetching a thread does not mark it read. The default
+scope matches the web app's chat threads, including channel and direct-message
+conversations.
+
+`--limit` controls the number of threads per page (1–100; default 15). JSON is
+an object with `threads` and `next_cursor`. Use the response cursor with the same
+view, or `--all` to collect every remaining thread page. This pagination is
+separate from pagination of replies inside a thread.
+
+Each row contains the parent message preview, `id`/`parent_comment_id`,
+`message_id`, `channel_id`, root parent metadata, a thread URL, read status,
+reply counts, timestamps, and the read/unread reply IDs returned by ClickUp.
+`has_more_read` and `has_more_unread` indicate that those ID lists are partial.
+If a parent message is unavailable, its thread and IDs remain in the output
+with `parent_status` and an empty preview. Non-chat roots retain their metadata;
+task roots have `task_id` and empty chat IDs.
+Counts are `null` (shown as `-` in the table) when their thread metadata is
+unavailable, rather than implying there are zero replies.
+
+Use the connected ClickUp MCP for thread contents and replies:
+
+| Action | MCP call with a chat thread row |
+| --- | --- |
+| Read replies, with its own pagination | `clickup_get_chat_message_replies(message_id=row.message_id)` |
+| Read channel messages | `clickup_get_chat_channel_messages(channel_id=row.channel_id)` |
+| Send a reply | `clickup_send_chat_message(channel_id=row.channel_id, parent_message_id=row.message_id, content="…")` |
+
+Pass the CLI session's `workspace_id` to MCP when using multiple workspaces.
+For a task thread, use `clickup_get_threaded_comments(comment_id=row.parent_comment_id)`
+and `clickup_create_comment(entity_type="task", entity_id=row.task_id,
+reply_to_id=row.parent_comment_id, comment_text="…")`.
 
 ## Assigned Comments
 

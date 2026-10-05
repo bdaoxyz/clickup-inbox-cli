@@ -6,7 +6,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Callable, Iterator, Sequence
 
 from . import __version__
 from .client import (
@@ -17,6 +17,7 @@ from .client import (
     flatten_bundles,
 )
 from .comments import AssignedCommentsClient, flatten_comments
+from .replies import RepliesClient, flatten_threads
 from .auth import (
     build_session_store,
     capture_browser_session,
@@ -50,7 +51,7 @@ STATE_ACTIONS = {
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="clickup-inbox",
-        description="Experimental CLI for ClickUp Inbox and Assigned Comments.",
+        description="Experimental CLI for ClickUp Inbox, Assigned Comments, and Replies.",
     )
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument(
@@ -98,6 +99,17 @@ def build_parser() -> argparse.ArgumentParser:
         view_parser.add_argument(
             "--user-id", type=int, help="Override the current user ID inferred from the session"
         )
+        view_parser.add_argument("--json", action="store_true", help="Emit JSON")
+
+    replies_parser = subparsers.add_parser(
+        "replies", help="List Home Replies using the saved browser session"
+    )
+    reply_views = replies_parser.add_subparsers(dest="reply_view", required=True)
+    for view in ("unread", "read"):
+        view_parser = reply_views.add_parser(view, help=f"Threads with {view} replies")
+        view_parser.add_argument("--limit", type=int, default=15, help="Page size (1–100)")
+        view_parser.add_argument("--cursor", default="", help="Response pagination cursor")
+        view_parser.add_argument("--all", action="store_true", help="Fetch all remaining pages")
         view_parser.add_argument("--json", action="store_true", help="Emit JSON")
 
     for name, (help_text, _method_name, _success_message) in STATE_ACTIONS.items():
@@ -160,6 +172,22 @@ def render_comments_table(rows: list[dict[str, object]]) -> str:
     return "\n".join(lines)
 
 
+def render_replies_table(rows: list[dict[str, object]]) -> str:
+    if not rows:
+        return "No reply threads found."
+    lines = [f"{'STATUS':<8}  {'REPLIES':>7}  {'UNREAD':>6}  {'CHANNEL / TASK':<18}  PARENT MESSAGE"]
+    for row in rows:
+        status = sanitize_terminal_text(row["read_status"])
+        count = sanitize_terminal_text(row["reply_count"] if row["reply_count"] is not None else "-")
+        unread = sanitize_terminal_text(row["unread_count"] if row["unread_count"] is not None else "-")
+        parent = sanitize_terminal_text(row["channel_id"] or row["task_id"] or row["root_parent_id"])
+        text = sanitize_terminal_text(row["text"])
+        if row["parent_status"] != "found":
+            text = f"(parent unavailable: {sanitize_terminal_text(row['parent_status'])})"
+        lines.append(f"{status:<8}  {count:>7}  {unread:>6}  {parent:<18}  {text}")
+    return "\n".join(lines)
+
+
 def run(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
@@ -171,6 +199,8 @@ def run(argv: Sequence[str] | None = None) -> int:
         )
         if args.command == "comments":
             return _run_comments(args, credentials)
+        if args.command == "replies":
+            return _run_replies(args, credentials)
         client = InboxClient(credentials)
         if args.command == "list":
             response = client.list_bundles(
@@ -209,24 +239,19 @@ def run(argv: Sequence[str] | None = None) -> int:
 def _run_comments(args: argparse.Namespace, credentials: SessionCredentials) -> int:
     client = AssignedCommentsClient(credentials)
     rows: list[dict[str, object]] = []
-    cursor = args.cursor
-    seen_cursors = {cursor}
-    while True:
-        response = client.list_comments(
+    next_cursor = None
+    for response in _iter_pages(
+        lambda cursor: client.list_comments(
             view=args.comment_view,
             limit=args.limit,
             cursor=cursor,
             resolved=args.resolved,
             user_id=args.user_id,
-        )
+        ),
+        cursor=args.cursor, all_pages=args.all, api_name=client.api_name,
+    ):
         rows.extend(flatten_comments(response, credentials.workspace_id))
         next_cursor = response.get("next_cursor") or None
-        if not args.all or not next_cursor:
-            break
-        if next_cursor in seen_cursors:
-            raise InboxAPIError("Assigned Comments API returned a repeated pagination cursor")
-        seen_cursors.add(next_cursor)
-        cursor = next_cursor
     if args.json:
         print(json.dumps({"comments": rows, "next_cursor": next_cursor}, indent=2))
     else:
@@ -234,6 +259,47 @@ def _run_comments(args: argparse.Namespace, credentials: SessionCredentials) -> 
         if next_cursor:
             print("More comments available; use --all or --json to get the next cursor.")
     return 0
+
+
+def _run_replies(args: argparse.Namespace, credentials: SessionCredentials) -> int:
+    client = RepliesClient(credentials)
+    rows: list[dict[str, object]] = []
+    next_cursor = None
+    for response in _iter_pages(
+        lambda cursor: client.list_threads(
+            read_status=args.reply_view, limit=args.limit, cursor=cursor,
+        ),
+        cursor=args.cursor, all_pages=args.all, api_name=client.api_name,
+    ):
+        parents = client.get_parent_comments(
+            [thread["parent_comment_id"] for thread in response["chat_threads"]]
+        )
+        rows.extend(flatten_threads(response, parents, credentials.workspace_id, args.reply_view))
+        next_cursor = response.get("next_cursor") or None
+    if args.json:
+        print(json.dumps({"threads": rows, "next_cursor": next_cursor}, indent=2))
+    else:
+        print(render_replies_table(rows))
+        if next_cursor:
+            print("More reply threads available; use --all or --json to get the next cursor.")
+    return 0
+
+
+def _iter_pages(
+    fetch_page: Callable[[str], dict[str, Any]],
+    *, cursor: str, all_pages: bool, api_name: str,
+) -> Iterator[dict[str, Any]]:
+    seen_cursors = {cursor}
+    while True:
+        response = fetch_page(cursor)
+        yield response
+        next_cursor = response.get("next_cursor") or None
+        if not all_pages or not next_cursor:
+            return
+        if next_cursor in seen_cursors:
+            raise InboxAPIError(f"{api_name} returned a repeated pagination cursor")
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
 
 
 def _run_auth(args: argparse.Namespace) -> int:
