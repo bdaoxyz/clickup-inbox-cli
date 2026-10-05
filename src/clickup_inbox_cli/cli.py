@@ -16,6 +16,7 @@ from .client import (
     SessionCredentials,
     flatten_bundles,
 )
+from .comments import AssignedCommentsClient, flatten_comments
 from .auth import (
     build_session_store,
     capture_browser_session,
@@ -49,7 +50,7 @@ STATE_ACTIONS = {
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="clickup-inbox",
-        description="Experimental CLI for ClickUp's private Inbox API.",
+        description="Experimental CLI for ClickUp Inbox and Assigned Comments.",
     )
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument(
@@ -78,6 +79,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--folder", choices=("primary", "later", "cleared"), default="primary"
     )
     list_parser.add_argument("--json", action="store_true", help="Emit JSON")
+
+    comments_parser = subparsers.add_parser(
+        "comments", help="List Assigned Comments using the saved browser session"
+    )
+    comment_views = comments_parser.add_subparsers(dest="comment_view", required=True)
+    for view, help_text in (
+        ("assigned", "Comments assigned to me"),
+        ("delegated", "Comments delegated by me to others"),
+    ):
+        view_parser = comment_views.add_parser(view, help=help_text)
+        view_parser.add_argument("--limit", type=int, default=100, help="Page size (1–100)")
+        view_parser.add_argument("--cursor", default="", help="Response pagination cursor")
+        view_parser.add_argument("--all", action="store_true", help="Fetch all remaining pages")
+        view_parser.add_argument(
+            "--resolved", action="store_true", help="Only resolved comments (default: unresolved)"
+        )
+        view_parser.add_argument(
+            "--user-id", type=int, help="Override the current user ID inferred from the session"
+        )
+        view_parser.add_argument("--json", action="store_true", help="Emit JSON")
 
     for name, (help_text, _method_name, _success_message) in STATE_ACTIONS.items():
         action_parser = subparsers.add_parser(name, help=help_text)
@@ -126,6 +147,19 @@ def render_table(rows: list[dict[str, object]]) -> str:
     return "\n".join(lines)
 
 
+def render_comments_table(rows: list[dict[str, object]]) -> str:
+    if not rows:
+        return "No assigned comments found."
+    lines = [f"{'STATUS':<10}  {'ASSIGNEE':<12}  {'TASK / PARENT':<16}  COMMENT"]
+    for row in rows:
+        status = "resolved" if row["resolved"] else "open"
+        assignee = sanitize_terminal_text(row["assignee_id"] or row["group_assignee_id"] or "")
+        parent = sanitize_terminal_text(row["task_id"] or row["parent_id"])
+        text = sanitize_terminal_text(row["text"])
+        lines.append(f"{status:<10}  {assignee:<12}  {parent:<16}  {text}")
+    return "\n".join(lines)
+
+
 def run(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
@@ -135,6 +169,8 @@ def run(argv: Sequence[str] | None = None) -> int:
         credentials = load_credentials(
             store_kind=args.credential_store, session_file=args.session_file
         )
+        if args.command == "comments":
+            return _run_comments(args, credentials)
         client = InboxClient(credentials)
         if args.command == "list":
             response = client.list_bundles(
@@ -168,6 +204,36 @@ def run(argv: Sequence[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     return 1
+
+
+def _run_comments(args: argparse.Namespace, credentials: SessionCredentials) -> int:
+    client = AssignedCommentsClient(credentials)
+    rows: list[dict[str, object]] = []
+    cursor = args.cursor
+    seen_cursors = {cursor}
+    while True:
+        response = client.list_comments(
+            view=args.comment_view,
+            limit=args.limit,
+            cursor=cursor,
+            resolved=args.resolved,
+            user_id=args.user_id,
+        )
+        rows.extend(flatten_comments(response, credentials.workspace_id))
+        next_cursor = response.get("next_cursor") or None
+        if not args.all or not next_cursor:
+            break
+        if next_cursor in seen_cursors:
+            raise InboxAPIError("Assigned Comments API returned a repeated pagination cursor")
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+    if args.json:
+        print(json.dumps({"comments": rows, "next_cursor": next_cursor}, indent=2))
+    else:
+        print(render_comments_table(rows))
+        if next_cursor:
+            print("More comments available; use --all or --json to get the next cursor.")
+    return 0
 
 
 def _run_auth(args: argparse.Namespace) -> int:

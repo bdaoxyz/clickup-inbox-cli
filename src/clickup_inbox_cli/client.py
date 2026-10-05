@@ -60,6 +60,8 @@ class SessionCredentials:
 
 
 class InboxClient:
+    api_name = "Inbox API"
+
     def __init__(self, credentials: SessionCredentials, timeout: float = 20.0):
         self.credentials = credentials
         self.timeout = timeout
@@ -172,16 +174,16 @@ class InboxClient:
                 raw_body = response.read()
                 result = json.loads(raw_body) if raw_body.strip() else {}
         except HTTPError as exc:
-            raise InboxAPIError(f"ClickUp Inbox API returned HTTP {exc.code}") from exc
+            raise InboxAPIError(f"ClickUp {self.api_name} returned HTTP {exc.code}") from exc
         except URLError as exc:
-            raise InboxAPIError(f"Could not reach ClickUp Inbox API: {exc.reason}") from exc
+            raise InboxAPIError(f"Could not reach ClickUp {self.api_name}: {exc.reason}") from exc
         except json.JSONDecodeError as exc:
-            raise InboxAPIError("ClickUp Inbox API returned invalid JSON") from exc
+            raise InboxAPIError(f"ClickUp {self.api_name} returned invalid JSON") from exc
         except (HTTPException, OSError, UnicodeError) as exc:
-            raise InboxAPIError("ClickUp Inbox API response could not be read") from exc
+            raise InboxAPIError(f"ClickUp {self.api_name} response could not be read") from exc
 
         if not isinstance(result, dict):
-            raise InboxAPIError("ClickUp Inbox API returned an unexpected response")
+            raise InboxAPIError(f"ClickUp {self.api_name} returned an unexpected response")
         return result
 
 

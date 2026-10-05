@@ -1,10 +1,11 @@
 # clickup-inbox-cli
 
-Experimental CLI for ClickUp's private Inbox API. It complements the official
-ClickUp integration: use the integration to read and update tasks or comments,
-and use this CLI for Inbox-only state such as read, clear, and snooze.
+Experimental CLI for ClickUp's private Inbox and Assigned Comments APIs. It
+complements the official ClickUp integration: use this CLI to discover your
+assigned/delegated comments and manage Inbox state, and use the connected ClickUp
+MCP to resolve/reopen, reassign, edit, delete, or reply to comments.
 
-This is not an official ClickUp API client. Its endpoint and authentication
+This is not an official ClickUp API client. Its endpoints and authentication
 contract were observed from the ClickUp web application and can change without
 notice.
 
@@ -113,6 +114,60 @@ bundle snapshot ID, not a ClickUp task ID:
 After clear or snooze, list the corresponding folder to obtain the new snapshot
 ID before reversing the action. Snapshot IDs change when Inbox state changes.
 
+## Assigned Comments
+
+These commands reuse the same login and automatic session refresh as Inbox:
+
+```sh
+.venv/bin/clickup-inbox comments assigned
+.venv/bin/clickup-inbox comments delegated --json
+.venv/bin/clickup-inbox comments assigned --all --json
+.venv/bin/clickup-inbox comments delegated --resolved --all --json
+.venv/bin/clickup-inbox comments assigned --limit 20 --cursor '<next_cursor>' --json
+```
+
+Both views default to unresolved comments across **all assignment dates**.
+ClickUp's web page defaults “Assigned to me” to the last 90 days; this CLI omits
+that date filter so older assignments are included. “Delegated by me” matches
+the web app's filter: assignments made by you to others, excluding yourself and
+the special “Anyone” assignee. `--resolved` selects resolved comments only.
+Assigned replies are included alongside top-level comments.
+
+`--limit` controls page size (1–100; default 100). JSON output contains `comments`
+and `next_cursor`. Pass that **response** cursor back with `--cursor`, or use
+`--all` to collect every remaining page. Individual comment cursors are not
+pagination cursors. Fetch all pages with the same view and resolved setting.
+
+Your user ID is inferred from the saved web-session token. If your environment
+credential is opaque, add `--user-id YOUR_NUMERIC_CLICKUP_USER_ID` to either view.
+
+Each JSON row includes `id`, `task_id`, `parent_id`, `parent_type`, root parent
+IDs/types, plain text, assignee/assigner/author IDs, resolved state, reply count,
+and a task URL when applicable. Timestamp fields are Unix milliseconds as
+returned by ClickUp. For assigned replies, `task_id` comes from the root task;
+`parent_id` is the thread's parent comment ID. Non-task comments keep their
+parent metadata and have an empty `task_id`/task URL.
+
+### Hand off actions to the connected ClickUp MCP
+
+The connected MCP already supports these operations, so the CLI does not
+duplicate them. Given a row from `comments … --json`:
+
+| Action | ClickUp MCP arguments |
+| --- | --- |
+| Resolve | `clickup_update_comment(comment_id=row.id, resolved=true)` |
+| Reopen | `clickup_update_comment(comment_id=row.id, resolved=false)` |
+| Reassign | `clickup_update_comment(comment_id=row.id, assignee=USER_ID)` |
+| Read the task discussion | `clickup_get_task_comments(task_id=row.task_id)` |
+| Read a reply's thread | `clickup_get_threaded_comments(comment_id=row.parent_id)` |
+| Reply to a top-level task comment | `clickup_create_comment(entity_type="task", entity_id=row.task_id, reply_to_id=row.id, comment_text="…")` |
+| Reply in an assigned reply's thread | `clickup_create_comment(entity_type="task", entity_id=row.task_id, reply_to_id=row.parent_id, comment_text="…")` |
+
+Pass the CLI session's `workspace_id` to MCP when you have multiple workspaces.
+For resolve/reopen and reassign, omit `comment_text` to preserve existing content.
+Use task-comment operations only when `task_id` is non-empty; the JSON parent
+metadata identifies other entities for the appropriate MCP operation.
+
 ## Environment-only fallback
 
 The original environment-variable authentication remains supported. If any of
@@ -144,4 +199,4 @@ PYTHONPATH=src python3 -m unittest discover -s tests -v
   `--json`.
 - HTTP errors never print response bodies or credential-bearing headers.
 - Private endpoints may change without notice; use this as a local tool, not a
-  stable public integration contract.
+stable public integration contract.
