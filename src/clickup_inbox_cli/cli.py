@@ -72,12 +72,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    list_parser = subparsers.add_parser("list", help="List Primary Inbox bundles")
+    list_parser = subparsers.add_parser("list", help="List Inbox bundles (default: Primary)")
     list_parser.add_argument("--limit", type=int, default=20)
     list_parser.add_argument("--cursor", default="", help="Pagination cursor")
     list_parser.add_argument("--unread", action="store_true", help="Only unread bundles")
     list_parser.add_argument(
-        "--folder", choices=("primary", "later", "cleared"), default="primary"
+        "--folder",
+        choices=("primary", "other", "later", "cleared"),
+        default="primary",
+        help="Inbox tab to list (default: primary; other is opt-in)",
     )
     list_parser.add_argument("--json", action="store_true", help="Emit JSON")
 

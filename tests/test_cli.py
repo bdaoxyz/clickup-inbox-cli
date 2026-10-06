@@ -95,13 +95,15 @@ class CLITests(unittest.TestCase):
             "notificationBundleGroups": [],
         }
 
-        with redirect_stdout(io.StringIO()):
-            code = run(["list", "--folder", "later"])
+        for folder in ("other", "later", "cleared"):
+            with self.subTest(folder=folder), redirect_stdout(io.StringIO()):
+                code = run(["list", "--folder", folder])
 
-        self.assertEqual(code, 0)
-        self.assertEqual(
-            client_class.return_value.list_bundles.call_args.kwargs["folder"], "later"
-        )
+            self.assertEqual(code, 0)
+            self.assertEqual(
+                client_class.return_value.list_bundles.call_args.kwargs["folder"],
+                folder,
+            )
 
     @patch("clickup_inbox_cli.cli.load_credentials")
     def test_run_reports_safe_api_error(self, load_credentials):

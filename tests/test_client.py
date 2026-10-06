@@ -79,21 +79,34 @@ class ClientTests(unittest.TestCase):
         )
         self.assertEqual(sent.headers["User-agent"], "clickup-inbox-cli/0.3.0")
 
-    def test_list_bundles_supports_later_and_cleared_folders(self):
+    def test_list_bundles_supports_optional_folders(self):
         credentials = SessionCredentials("123", "Bearer token", "csrf", "session")
         client = InboxClient(credentials)
         response = {"resources": [], "notificationBundleGroups": []}
 
-        for folder, expected_status in (("later", "snoozed"), ("cleared", "cleared")):
+        for folder, expected_status, expected_type in (
+            ("other", "uncleared", "activity"),
+            ("later", "snoozed", None),
+            ("cleared", "cleared", None),
+        ):
             with self.subTest(folder=folder), patch(
                 "clickup_inbox_cli.client._open_without_redirects",
                 return_value=io.BytesIO(json.dumps(response).encode()),
             ) as request:
-                client.list_bundles(folder=folder)
+                client.list_bundles(
+                    folder=folder, limit=7, cursor="current-page", unread_only=True
+                )
 
             payload = json.loads(request.call_args.args[0].data)
             self.assertEqual(payload["filteredBy"]["status"], expected_status)
-            self.assertNotIn("bundleType", payload["filteredBy"])
+            if expected_type is None:
+                self.assertNotIn("bundleType", payload["filteredBy"])
+            else:
+                self.assertEqual(payload["filteredBy"]["bundleType"], expected_type)
+            self.assertTrue(payload["filteredBy"]["unread"])
+            self.assertEqual(
+                payload["pagination"], {"nextCursor": "current-page", "limit": 7}
+            )
 
     def test_bundle_state_mutations_match_observed_contracts(self):
         credentials = SessionCredentials("123", "Bearer token", "csrf", "session")

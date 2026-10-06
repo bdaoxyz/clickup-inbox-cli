@@ -77,9 +77,14 @@ class InboxClient:
         if not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
 
-        statuses = {"primary": "uncleared", "later": "snoozed", "cleared": "cleared"}
+        statuses = {
+            "primary": "uncleared",
+            "other": "uncleared",
+            "later": "snoozed",
+            "cleared": "cleared",
+        }
         if folder not in statuses:
-            raise ValueError("folder must be primary, later, or cleared")
+            raise ValueError("folder must be primary, other, later, or cleared")
 
         filtered_by = {
             "status": statuses[folder],
@@ -89,8 +94,9 @@ class InboxClient:
             "reminders": False,
             "saved": False,
         }
-        if folder == "primary":
-            filtered_by = {"bundleType": "messages", **filtered_by}
+        if folder in ("primary", "other"):
+            bundle_type = "messages" if folder == "primary" else "activity"
+            filtered_by = {"bundleType": bundle_type, **filtered_by}
 
         payload = {
             "filteredBy": filtered_by,
