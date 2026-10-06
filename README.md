@@ -92,10 +92,17 @@ command:
 ```sh
 .venv/bin/clickup-inbox list --limit 20
 .venv/bin/clickup-inbox list --unread --json
+.venv/bin/clickup-inbox list --folder other --unread --json
 .venv/bin/clickup-inbox list --folder later --json
 .venv/bin/clickup-inbox list --folder cleared --json
 .venv/bin/clickup-inbox list --cursor '<next_cursor>' --json
 ```
+
+Listing defaults to **Primary**. **Other** is optional: pass `--folder other`
+only when you want to include that tab in a sweep. Existing sweep commands
+keep reading Primary unless they explicitly select Other. The unread filter,
+page size, and cursor options work for both tabs. When paginating, keep the
+same folder and filters as the request that returned the cursor.
 
 JSON output is an object with `bundles` and `next_cursor`; pass a non-null
 `next_cursor` back to `list --cursor` to enumerate the next page. Mutation
