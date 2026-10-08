@@ -85,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
     list_parser.add_argument("--json", action="store_true", help="Emit JSON")
 
     comments_parser = subparsers.add_parser(
-        "comments", help="List Assigned Comments using the saved browser session"
+        "comments", help="List, resolve, or reopen comments using the saved browser session"
     )
     comment_views = comments_parser.add_subparsers(dest="comment_view", required=True)
     for view, help_text in (
@@ -103,6 +103,14 @@ def build_parser() -> argparse.ArgumentParser:
             "--user-id", type=int, help="Override the current user ID inferred from the session"
         )
         view_parser.add_argument("--json", action="store_true", help="Emit JSON")
+
+    for action, help_text in (
+        ("resolve", "Mark a comment resolved"),
+        ("reopen", "Reopen a resolved comment"),
+    ):
+        action_parser = comment_views.add_parser(action, help=help_text)
+        action_parser.add_argument("comment_id", help="Exact comment ID from comments --json")
+        action_parser.add_argument("--json", action="store_true", help="Emit JSON")
 
     replies_parser = subparsers.add_parser(
         "replies", help="List Home Replies using the saved browser session"
@@ -241,6 +249,14 @@ def run(argv: Sequence[str] | None = None) -> int:
 
 def _run_comments(args: argparse.Namespace, credentials: SessionCredentials) -> int:
     client = AssignedCommentsClient(credentials)
+    if args.comment_view in ("resolve", "reopen"):
+        resolved = args.comment_view == "resolve"
+        client.set_resolved(args.comment_id, resolved=resolved)
+        if args.json:
+            print(json.dumps({"id": args.comment_id, "resolved": resolved}, indent=2))
+        else:
+            print(f"Comment {'resolved' if resolved else 'reopened'}.")
+        return 0
     rows: list[dict[str, object]] = []
     next_cursor = None
     for response in _iter_pages(

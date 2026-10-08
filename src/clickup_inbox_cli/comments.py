@@ -27,6 +27,15 @@ _THREAD_FIELDS = (
 class AssignedCommentsClient(InboxClient):
     api_name = "Assigned Comments API"
 
+    def set_resolved(self, comment_id: str, *, resolved: bool) -> None:
+        """Change only a comment's resolved state using the saved web session."""
+        if not isinstance(comment_id, str) or not comment_id.strip():
+            raise ValueError("a nonempty comment ID is required")
+        if type(resolved) is not bool:
+            raise ValueError("resolved must be a boolean")
+        encoded_id = quote(comment_id, safe="")
+        self._request("PUT", f"/comments/v2/comment/{encoded_id}", {"resolved": resolved})
+
     def list_comments(
         self,
         *,

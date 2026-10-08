@@ -3,6 +3,7 @@ import io
 import json
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from urllib.error import HTTPError
 from unittest.mock import patch
 
 from clickup_inbox_cli.cli import run
@@ -31,6 +32,44 @@ class CommentsCLITests(unittest.TestCase):
         ) as opener, redirect_stdout(stdout), redirect_stderr(stderr):
             code = run(argv)
         return code, stdout.getvalue(), stderr.getvalue(), opener
+
+    def test_resolve_and_reopen_send_only_resolved_state(self):
+        for action, resolved in (("resolve", True), ("reopen", False)):
+            with self.subTest(action=action):
+                code, out, err, opener = self.invoke(
+                    ["comments", action, "90130329498708"], [{}],
+                )
+                self.assertEqual((code, err), (0, ""))
+                self.assertEqual(out, f"Comment {'resolved' if resolved else 'reopened'}.\n")
+                self.assertEqual(opener.call_count, 1)
+                sent = opener.call_args.args[0]
+                self.assertEqual(json.loads(sent.data), {"resolved": resolved})
+                self.assertEqual(sent.headers["X-workspace-id"], "123")
+
+    def test_comment_state_json_output(self):
+        for action, resolved in (("resolve", True), ("reopen", False)):
+            with self.subTest(action=action):
+                code, out, err, opener = self.invoke(
+                    ["comments", action, "90130329498708", "--json"], [{}],
+                )
+                self.assertEqual((code, err), (0, ""))
+                self.assertEqual(json.loads(out), {
+                    "id": "90130329498708", "resolved": resolved,
+                })
+                self.assertEqual(opener.call_count, 1)
+
+    def test_failed_comment_update_reports_error_without_success(self):
+        error = HTTPError("https://example.invalid", 403, "private response", {}, io.BytesIO())
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch("clickup_inbox_cli.cli.load_credentials", return_value=credentials()), patch(
+            "clickup_inbox_cli.client._open_without_redirects", side_effect=error,
+        ), redirect_stdout(stdout), redirect_stderr(stderr):
+            code = run(["comments", "resolve", "90130329498708"])
+        error.close()
+        self.assertEqual(code, 2)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("HTTP 403", stderr.getvalue())
+        self.assertNotIn("private response", stderr.getvalue())
 
     def test_assigned_json_includes_comment_text_and_next_cursor(self):
         code, out, err, opener = self.invoke(

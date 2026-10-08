@@ -51,6 +51,42 @@ class AssignedCommentsTests(unittest.TestCase):
         self.assertEqual(sent.headers["X-workspace-id"], "123")
         self.assertEqual(sent.headers["Sessionid"], "session")
 
+    def test_resolve_and_reopen_use_minimal_authenticated_update(self):
+        client = self.client("Bearer opaque-secret")
+        for resolved in (True, False):
+            with self.subTest(resolved=resolved), patch(
+                "clickup_inbox_cli.client._open_without_redirects",
+                return_value=io.BytesIO(b"{}"),
+            ) as opener:
+                client.set_resolved("90130329498708", resolved=resolved)
+            sent = opener.call_args.args[0]
+            self.assertEqual(sent.method, "PUT")
+            self.assertEqual(sent.full_url, client.credentials.api_base +
+                             "/comments/v2/comment/90130329498708")
+            self.assertEqual(json.loads(sent.data), {"resolved": resolved})
+            self.assertEqual(sent.headers["Authorization"], "Bearer opaque-secret")
+            self.assertEqual(sent.headers["X-csrf"], "csrf")
+            self.assertEqual(sent.headers["X-workspace-id"], "123")
+            self.assertEqual(sent.headers["Sessionid"], "session")
+            opener.assert_called_once()
+
+    def test_comment_update_encodes_id_as_one_path_segment(self):
+        with patch("clickup_inbox_cli.client._open_without_redirects",
+                   return_value=io.BytesIO(b"")) as opener:
+            self.client().set_resolved("comment/with?special#characters", resolved=True)
+        self.assertEqual(urlsplit(opener.call_args.args[0].full_url).path,
+                         "/comments/v2/comment/comment%2Fwith%3Fspecial%23characters")
+
+    def test_invalid_comment_update_fails_before_network(self):
+        with patch("clickup_inbox_cli.client._open_without_redirects") as opener:
+            for comment_id in (None, 1, "", " "):
+                with self.subTest(comment_id=comment_id), self.assertRaises(ValueError):
+                    self.client().set_resolved(comment_id, resolved=True)
+            for resolved in (None, 0, 1, "false"):
+                with self.subTest(resolved=resolved), self.assertRaises(ValueError):
+                    self.client().set_resolved("90130329498708", resolved=resolved)
+            opener.assert_not_called()
+
     def test_delegated_resolved_and_top_level_cursor_contract(self):
         response = {"comments": [{"id": "comment", "cursor": "comment-cursor"}],
                     "next_cursor": "response-cursor", "prev_cursor": None}

@@ -1,9 +1,9 @@
 # clickup-inbox-cli
 
 Experimental CLI for ClickUp's private Inbox, Assigned Comments, and Replies APIs.
-Use this CLI to discover assigned/delegated comments and reply threads, and to
-manage Inbox state. Use the connected ClickUp MCP to read thread contents,
-resolve/reopen, reassign, edit, delete, or reply to comments.
+Use this CLI to discover assigned/delegated comments and reply threads, resolve
+or reopen comments, and manage Inbox state. Use the connected ClickUp MCP to
+read thread contents, reassign, edit, delete, or reply to comments.
 
 This is not an official ClickUp API client. Its endpoints and authentication
 contract were observed from the ClickUp web application and can change without
@@ -200,15 +200,35 @@ returned by ClickUp. For assigned replies, `task_id` comes from the root task;
 `parent_id` is the thread's parent comment ID. Non-task comments keep their
 parent metadata and have an empty `task_id`/task URL.
 
+### Resolve or reopen a comment
+
+Use the exact `comments[].id` returned by either JSON listing, including an
+assigned reply's own ID:
+
+```sh
+.venv/bin/clickup-inbox comments resolve '<comment_id>'
+.venv/bin/clickup-inbox comments reopen '<comment_id>'
+.venv/bin/clickup-inbox comments resolve '<comment_id>' --json
+```
+
+Each command changes one comment using the saved browser session and automatic
+session refresh. The request sends only the resolved state, preserving the
+comment's text, rich formatting, and assignment. `--json` returns
+`{"id": "<comment_id>", "resolved": true}` after a successful resolve, or
+`resolved: false` after reopening. API failures exit with code 2 and print an
+error to stderr without a success result.
+
+Use the comment ID, not its `task_id`, `parent_id`, pagination cursor, or an
+Inbox bundle snapshot ID. The `--resolved` listing flag still only filters
+comments; it does not change their state.
+
 ### Hand off actions to the connected ClickUp MCP
 
-The connected MCP already supports these operations, so the CLI does not
-duplicate them. Given a row from `comments … --json`:
+Use the connected MCP for the remaining comment operations. Given a row from
+`comments … --json`:
 
 | Action | ClickUp MCP arguments |
 | --- | --- |
-| Resolve | `clickup_update_comment(comment_id=row.id, resolved=true)` |
-| Reopen | `clickup_update_comment(comment_id=row.id, resolved=false)` |
 | Reassign | `clickup_update_comment(comment_id=row.id, assignee=USER_ID)` |
 | Read the task discussion | `clickup_get_task_comments(task_id=row.task_id)` |
 | Read a reply's thread | `clickup_get_threaded_comments(comment_id=row.parent_id)` |
@@ -216,7 +236,7 @@ duplicate them. Given a row from `comments … --json`:
 | Reply in an assigned reply's thread | `clickup_create_comment(entity_type="task", entity_id=row.task_id, reply_to_id=row.parent_id, comment_text="…")` |
 
 Pass the CLI session's `workspace_id` to MCP when you have multiple workspaces.
-For resolve/reopen and reassign, omit `comment_text` to preserve existing content.
+For reassignment, omit `comment_text` to preserve existing content.
 Use task-comment operations only when `task_id` is non-empty; the JSON parent
 metadata identifies other entities for the appropriate MCP operation.
 
